@@ -67,25 +67,43 @@ The classification generates several output files (all read-only, original files
 - `classification_results/classification_summary.png` - Bar chart of results
 - `classification_results/classification_distribution.png` - Pie chart distribution
 
-## Classification Logic
+## Classification Logic (Updated v2.0)
 
-The system uses DICOM header tags to classify images:
+**⚠️ IMPORTANT: Classification logic updated based on actual dataset analysis**
 
-- **Modality** (0008,0060) - Confirms ultrasound imaging
-- **Image Type** (0008,0008) - Identifies M-mode, 2D, annotations
-- **Series Description** (0008,103E) - Contains imaging mode and Doppler info
-- **Color Space** (0028,0004) - Detects color Doppler presence
-- **Samples Per Pixel** (0028,0002) - Identifies RGB color images
-- **Number of Frames** (0028,0008) - Detects multi-frame comparisons
+### Key Findings from Dataset Analysis:
+- **All files have SamplesPerPixel=3** (RGB format) - NOT indicative of Color Doppler
+- **SeriesDescription is empty** for all files - no text-based classification possible  
+- **Multi-frame files are cine loops**, not side-by-side comparisons
+- **ImageType[3] contains vendor codes** that distinguish image types
+
+### Corrected Classification Tags:
+
+#### Primary Tags (High Priority):
+- **ImageType[3]** - Vendor-specific codes:
+  - `0001`, `0011`: Multi-frame cine loops
+  - `0005`, `0009`, `0015`, `0019`: Static single images
+- **UltrasoundColorDataPresent** (0018,9070) - True Color Doppler indicator (0 or 1)
+- **NumberOfFrames** (0028,0008) - Confirms cine vs static
 - **Graphic Annotation Sequence** (0070,0001) - Detects annotations
 - **Text Object Sequence** (0070,0008) - Detects measurements
+
+#### Secondary Tags (Lower Priority):
+- **Modality** (0008,0060) - Confirms ultrasound imaging (always "US")
+- **Image Type** (0008,0008) - General image type info
 - **Overlay Data** (60xx,3000) - Detects overlay annotations
+
+#### Tags to IGNORE (Misleading):
+- ❌ **Samples Per Pixel** (0028,0002) - Always 3 (misleading)
+- ❌ **Color Space** (0028,0004) - Not reliable for Color Doppler
+- ❌ **Series Description** (0008,103E) - Empty for all files
 
 ## Testing
 
-1. **Sample Test**: Run `python test_classifier.py` to test on ~20 sample files
-2. **Visualization**: Interactively view classified images to verify accuracy
-3. **Full Processing**: Run `python test_classifier.py --full` for complete dataset
+1. **Sample Test**: Run `python run_classification.py` to test on sample files
+2. **Image Validation**: Run `python save_images.py` to save images as PNG files for visual verification
+3. **Full Processing**: Run `python run_classification.py --full` for complete dataset
+4. **Header Analysis**: Run `python utils/examine_headers.py` to analyze DICOM headers
 
 ## Notes
 

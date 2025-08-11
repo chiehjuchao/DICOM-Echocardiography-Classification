@@ -1,0 +1,267 @@
+DETAILED DICOM HEADER ANALYSIS
+==================================================
+
+File: 1.2.840.113619.2.391.3279.1672657677.25.1.512.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0011']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 80
+  ultrasound_color_data: 1
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672658518.76.1.512.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0001']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 124
+  ultrasound_color_data: 0
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672657525.16.1.512.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0001']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 91
+  ultrasound_color_data: 0
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672658325.64.1.512.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0001']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 92
+  ultrasound_color_data: 0
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672657632.22.1.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0005']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 1
+  ultrasound_color_data: N/A
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672658174.58.1.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0009']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 1
+  ultrasound_color_data: 0
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672658077.50.1.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0019']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 1
+  ultrasound_color_data: N/A
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672658143.56.1.512.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0011']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 67
+  ultrasound_color_data: 1
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672658360.68.1.512.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0001']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 82
+  ultrasound_color_data: 0
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672657795.35.1.512.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0011']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 74
+  ultrasound_color_data: 1
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672657984.45.1.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0015']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 1
+  ultrasound_color_data: 1
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672658541.78.1.512.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0001']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 82
+  ultrasound_color_data: 0
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672658051.49.1.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0001']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 1
+  ultrasound_color_data: N/A
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672657919.41.1.512.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0011']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 76
+  ultrasound_color_data: 1
+  rows: 758
+  columns: 1016
+
+File: 1.2.840.113619.2.391.3279.1672657460.9.1.dcm
+  modality: US
+  image_type: ['DERIVED', 'PRIMARY', '', '0001']
+  series_description: 
+  study_description: ECHO TRANSTHORACIC (TTE)
+  acquisition_type: N/A
+  samples_per_pixel: 3
+  photometric_interpretation: YBR_FULL_422
+  color_space: N/A
+  number_of_frames: 1
+  ultrasound_color_data: N/A
+  rows: 758
+  columns: 1016
+
+
+UNIQUE VALUES SUMMARY:
+------------------------------
+
+Modality:
+  - US
+
+ImageType:
+  - ['DERIVED', 'PRIMARY', '', '0001']
+  - ['DERIVED', 'PRIMARY', '', '0005']
+  - ['DERIVED', 'PRIMARY', '', '0009']
+  - ['DERIVED', 'PRIMARY', '', '0011']
+  - ['DERIVED', 'PRIMARY', '', '0015']
+  - ['DERIVED', 'PRIMARY', '', '0019']
+
+SeriesDescription:
+  - 
+
+StudyDescription:
+  - ECHO TRANSTHORACIC (TTE)
+
+AcquisitionType:
+  - N/A
+
+SamplesPerPixel:
+  - 3
+
+PhotometricInterpretation:
+  - YBR_FULL_422
+
+ColorSpace:
+  - N/A
+
+NumberOfFrames:
+  - 1
+  - 124
+  - 67
+  - 74
+  - 76
+  - 80
+  - 82
+  - 91
+  - 92
+
+UltrasoundColorDataPresent:
+  - 0
+  - 1
+  - N/A
+
+ANALYSIS:
+----------
+• NumberOfFrames range: 1 to 124
+• Multi-frame files: 9/15 (60.0%)
+• RGB/Color files (SamplesPerPixel > 1): 15/15 (100.0%)

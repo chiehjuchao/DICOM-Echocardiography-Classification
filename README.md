@@ -16,10 +16,11 @@ This project provides intelligent classification of echocardiography DICOM image
 ## Key Features
 
 - ✅ **Read-only processing** - Original DICOM files are never modified
-- ✅ **Intelligent classification** using DICOM header tags
+- ✅ **Intelligent classification** using vendor-specific DICOM header patterns
+- ✅ **Corrected logic** based on actual dataset analysis (v2.0)
 - ✅ **Confidence scoring** with detailed reasoning for each classification
 - ✅ **Multiple output formats** - CSV summaries, detailed JSON results, statistics
-- ✅ **Interactive visualization** capabilities for result validation
+- ✅ **Image saving capabilities** for visual validation
 - ✅ **Progress tracking** for large datasets
 - ✅ **Comprehensive logging** and error handling
 
@@ -38,11 +39,11 @@ source dicom_env/bin/activate
 
 ### 2. Test Classification
 ```bash
-# Test on sample files with interactive visualization
-python test_classifier.py
-
-# Or run non-interactive sample classification
+# Run sample classification (non-interactive)
 python run_classification.py
+
+# Save sample images as PNG files for visual validation
+python save_images.py --max-per-category 3
 ```
 
 ### 3. Full Classification
@@ -59,27 +60,38 @@ python dicom_echo_classifier.py /path/to/dicom/files
 ```
 DICOM_classification/
 ├── dicom_echo_classifier.py    # Main classification engine
-├── test_classifier.py          # Interactive test with visualization
 ├── run_classification.py       # Non-interactive batch processing
+├── save_images.py              # Save DICOM images as PNG files
 ├── requirements.txt            # Python dependencies
 ├── setup_env.sh               # Environment setup script
 ├── CLAUDE.md                  # Detailed documentation
-└── README.md                  # This file
+├── README.md                  # This file
+├── utils/                     # Utility scripts
+│   ├── create_corrected_flowchart.py
+│   └── examine_headers.py
+└── analysis/                  # Analysis results
+    ├── corrected_classification_flowchart.png
+    └── header_analysis.txt
 ```
 
-## Classification Logic
+## Classification Logic (Updated v2.0)
 
-The system analyzes multiple DICOM header tags:
+**Based on actual dataset analysis, the system uses:**
 
-- **Modality** (0008,0060) - Confirms ultrasound imaging
-- **Image Type** (0008,0008) - Identifies imaging modes and annotations
-- **Series Description** (0008,103E) - Contains detailed imaging information
-- **Color Space** (0028,0004) - Detects color Doppler presence  
-- **Samples Per Pixel** (0028,0002) - Identifies RGB color images
-- **Number of Frames** (0028,0008) - Detects multi-frame comparisons
+### Primary Classification Tags:
+- **ImageType[3]** - Vendor-specific codes for image types:
+  - `0001`, `0011`: Multi-frame cine loops
+  - `0005`, `0009`, `0015`, `0019`: Static single images
+- **UltrasoundColorDataPresent** (0018,9070) - True Color Doppler indicator
+- **NumberOfFrames** (0028,0008) - Distinguishes cine vs static
 - **Graphic Annotation Sequence** (0070,0001) - Detects annotations
 - **Text Object Sequence** (0070,0008) - Detects measurements
-- **Overlay Data** (60xx,3000) - Detects overlay annotations
+
+### Notes on Dataset Findings:
+- ⚠️ **SamplesPerPixel=3** for ALL files (misleading for color detection)
+- ⚠️ **SeriesDescription** is empty (no text-based classification)
+- ✅ **ImageType vendor codes** are the key differentiator
+- ✅ **Multi-frame files** are cine loops, not side-by-side comparisons
 
 ## Output Files
 
