@@ -2,13 +2,17 @@
 """
 DICOM Echocardiography Classification Script
 
-This script loads DICOM files from the 2023Examples directory and classifies them into categories:
-1. 2D echo images without Color Doppler
-2. 2D echo images with Color Doppler  
-3. M-mode Doppler signals images
-4. M-mode 2D images
-5. Images with side-by-side comparison
-6. Images with annotations/measurements
+This script loads DICOM files from the 2023Examples directory and classifies them into 10 categories:
+1. Multi-frame with Color Doppler (0011)
+2. Multi-frame without Color Doppler (0001) 
+3. 2D Single-frame without Color Doppler (0001)
+4. 2D Single-frame with Color Doppler (0011)
+5. CW Doppler (0002,0004,0005,0015)
+6. PW Doppler (0008,0009)
+7. Color M-Mode (0020)
+8. Tissue Doppler (0019,0003)
+9. Side-by-side B-mode + Color Doppler
+10. Excluded images (ImageType[10]=="I1" or ImageType[2]=="INVALID")
 
 Author: Claude Code Assistant
 """
@@ -46,12 +50,16 @@ class EchoCardiographyClassifier:
     """DICOM Echocardiography Image Classifier"""
     
     CATEGORIES = {
-        '2d_no_doppler': '2D echo images without Color Doppler',
-        '2d_with_doppler': '2D echo images with Color Doppler',
-        'mmode_doppler': 'M-mode Doppler signals images',
-        'mmode_2d': 'M-mode 2D images',
-        'side_by_side': 'Images with side-by-side comparison',
-        'with_annotations': 'Images with annotations/measurements'
+        'excluded': 'Excluded (ImageType[10]==I1 or ImageType[2]==INVALID)',
+        'multi_frame_with_doppler': 'Multi-frame with Color Doppler (0011)',
+        'multi_frame_no_doppler': 'Multi-frame without Color Doppler (0001)',
+        '2d_single_no_doppler': '2D Single-frame without Color Doppler (0001)',
+        '2d_single_with_doppler': '2D Single-frame with Color Doppler (0011)',
+        'cw_doppler': 'CW Doppler (0002,0004,0005,0015)', 
+        'pw_doppler': 'PW Doppler (0008,0009)',
+        'color_m_mode': 'Color M-Mode (0020)',
+        'tissue_doppler': 'Tissue Doppler (0019,0003)',
+        'side_by_side_doppler': 'Side-by-side B-mode + Color Doppler'
     }
     
     def __init__(self, root_dir: str, output_dir: str = None):
@@ -135,6 +143,19 @@ class EchoCardiographyClassifier:
         
         return metadata
     
+    def is_multi_frame(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
+        """
+        Check if DICOM file is multi-frame (cine loop)
+        
+        Args:
+            ds: pydicom Dataset
+            metadata: Extracted metadata
+            
+        Returns:
+            True if multi-frame
+        """
+        return metadata.get('number_of_frames', 1) > 1
+    
     def has_annotations(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
         """
         Check if DICOM file contains annotations or measurements
@@ -146,8 +167,20 @@ class EchoCardiographyClassifier:
         Returns:
             True if annotations are present
         """
-        # Check for various annotation indicators
-        annotation_indicators = [
+        # Primary vendor-specific annotation indicators (ImageType[3])
+        # Updated: Only 0019 is used for tissue doppler detection
+        # 0003 is now also part of tissue doppler detection
+        # This method is now used only for fallback detection
+        image_type = metadata.get('image_type', [])
+        if len(image_type) >= 4:
+            vendor_code = image_type[3]
+            # Fallback annotation codes (not used in main classification)
+            annotation_codes = ['0005']  # Fallback annotation indicator
+            if vendor_code in annotation_codes:
+                return True
+        
+        # Fallback: Standard DICOM annotation indicators
+        standard_indicators = [
             metadata.get('has_graphic_annotation', False),
             metadata.get('has_text_object', False),
             metadata.get('has_overlay', False),
@@ -157,7 +190,7 @@ class EchoCardiographyClassifier:
             'REPORT' in str(metadata.get('series_description', '')).upper()
         ]
         
-        return any(annotation_indicators)
+        return any(standard_indicators)
     
     def has_color_doppler(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
         """
@@ -170,81 +203,98 @@ class EchoCardiographyClassifier:
         Returns:
             True if Color Doppler is present
         """
-        color_indicators = [
-            metadata.get('samples_per_pixel', 1) > 1,
-            metadata.get('photometric_interpretation', '') in ['RGB', 'YBR_FULL', 'YBR_PARTIAL_420'],
-            metadata.get('ultrasound_color_data_present', 0) == 1,
+        # Primary and most reliable indicator for Color Doppler
+        if metadata.get('ultrasound_color_data_present', 0) == 1:
+            return True
+        
+        # Secondary: Check ImageType[3] vendor codes for Color Doppler modes
+        image_type = metadata.get('image_type', [])
+        if len(image_type) >= 4:
+            vendor_code = image_type[3]
+            # Color Doppler related codes from comprehensive list
+            color_doppler_codes = ['0010', '0020', '0100']  # Color Doppler, Color M-Mode, Color Power Mode
+            if vendor_code in color_doppler_codes:
+                return True
+        
+        # Fallback indicators (less reliable)
+        fallback_indicators = [
             'COLOR' in str(metadata.get('image_type', [])).upper(),
             'DOPPLER' in str(metadata.get('series_description', '')).upper() and 'COLOR' in str(metadata.get('series_description', '')).upper(),
             'CFM' in str(metadata.get('series_description', '')).upper(),  # Color Flow Mapping
         ]
         
-        return any(color_indicators)
+        return any(fallback_indicators)
     
-    def is_mmode(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
+    def is_side_by_side_doppler(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
         """
-        Check if image is M-mode
+        Check if image contains side-by-side B-mode + Color Doppler regions
         
         Args:
             ds: pydicom Dataset
             metadata: Extracted metadata
             
         Returns:
-            True if M-mode
+            True if side-by-side B-mode + Color Doppler layout is detected
         """
-        mmode_indicators = [
-            'M_MODE' in str(metadata.get('image_type', [])).upper(),
-            'M-MODE' in str(metadata.get('series_description', '')).upper(),
-            'MMODE' in str(metadata.get('series_description', '')).upper(),
-            'TM' in str(metadata.get('image_type', [])).upper(),  # Time Motion
-            metadata.get('acquisition_type', '') == 'M_MODE'
-        ]
+        # Check if SequenceOfUltrasoundRegions exists
+        if not hasattr(ds, 'SequenceOfUltrasoundRegions'):
+            return False
         
-        return any(mmode_indicators)
+        regions = ds.SequenceOfUltrasoundRegions
+        
+        # Need exactly 2 regions for side-by-side comparison
+        if len(regions) != 2:
+            return False
+        
+        # Count B-mode and Doppler regions
+        b_mode_regions = []
+        doppler_regions = []
+        
+        for region in regions:
+            data_type = getattr(region, 'RegionDataType', 0)
+            if data_type == 1:  # B-mode (grayscale)
+                b_mode_regions.append(region)
+            elif data_type == 2:  # Color Doppler
+                doppler_regions.append(region)
+        
+        # Must have exactly 1 B-mode and 1 Color Doppler region
+        if len(b_mode_regions) != 1 or len(doppler_regions) != 1:
+            return False
+        
+        b_region = b_mode_regions[0]
+        d_region = doppler_regions[0]
+        
+        # Get coordinates
+        b_x1 = getattr(b_region, 'RegionLocationMinX0', 0)
+        b_x2 = getattr(b_region, 'RegionLocationMaxX1', 0)
+        b_y1 = getattr(b_region, 'RegionLocationMinY0', 0)
+        b_y2 = getattr(b_region, 'RegionLocationMaxY1', 0)
+        
+        d_x1 = getattr(d_region, 'RegionLocationMinX0', 0)
+        d_x2 = getattr(d_region, 'RegionLocationMaxX1', 0)
+        d_y1 = getattr(d_region, 'RegionLocationMinY0', 0)
+        d_y2 = getattr(d_region, 'RegionLocationMaxY1', 0)
+        
+        # Check if horizontally adjacent (side-by-side)
+        horizontal_gap = min(abs(b_x2 - d_x1), abs(d_x2 - b_x1))
+        
+        # Check for vertical overlap (needed for side-by-side layout)
+        y_overlap = not (b_y2 < d_y1 or d_y2 < b_y1)
+        
+        # Side-by-side criteria: close horizontal gap + vertical overlap
+        if horizontal_gap < 100 and y_overlap:
+            return True
+        
+        # Check if vertically adjacent (top-bottom) as alternative layout
+        vertical_gap = min(abs(b_y2 - d_y1), abs(d_y2 - b_y1))
+        x_overlap = not (b_x2 < d_x1 or d_x2 < b_x1)
+        
+        # Top-bottom criteria: close vertical gap + horizontal overlap
+        if vertical_gap < 100 and x_overlap:
+            return True
+        
+        return False
     
-    def has_doppler_signals(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
-        """
-        Check if image contains Doppler signal information
-        
-        Args:
-            ds: pydicom Dataset
-            metadata: Extracted metadata
-            
-        Returns:
-            True if Doppler signals are present
-        """
-        doppler_indicators = [
-            'DOPPLER' in str(metadata.get('image_type', [])).upper(),
-            'DOPPLER' in str(metadata.get('series_description', '')).upper(),
-            'PW' in str(metadata.get('series_description', '')).upper(),  # Pulsed Wave
-            'CW' in str(metadata.get('series_description', '')).upper(),  # Continuous Wave
-            'SPECTRAL' in str(metadata.get('series_description', '')).upper(),
-        ]
-        
-        return any(doppler_indicators)
-    
-    def is_side_by_side(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
-        """
-        Check if image contains side-by-side comparison
-        
-        Args:
-            ds: pydicom Dataset
-            metadata: Extracted metadata
-            
-        Returns:
-            True if side-by-side comparison
-        """
-        comparison_indicators = [
-            metadata.get('number_of_frames', 1) > 1,
-            'COMPARE' in str(metadata.get('series_description', '')).upper(),
-            'DUAL' in str(metadata.get('series_description', '')).upper(),
-            'SPLIT' in str(metadata.get('series_description', '')).upper(),
-            'SIDE' in str(metadata.get('series_description', '')).upper(),
-            # Check for unusually wide images that might indicate side-by-side
-            metadata.get('columns', 0) > metadata.get('rows', 0) * 1.5 if metadata.get('rows', 0) > 0 else False
-        ]
-        
-        return any(comparison_indicators)
     
     def classify_dicom(self, file_path: str) -> Optional[DicomClassification]:
         """
@@ -262,45 +312,73 @@ class EchoCardiographyClassifier:
         
         metadata = self.extract_metadata(ds)
         
-        # Classification logic with priority order
+        # Classification logic: Exclusion → Annotations → Frame count + ImageType[3]
         reasoning_parts = []
-        confidence = 0.5  # Base confidence
+        confidence = 0.8  # Base confidence
+        image_type = metadata.get('image_type', [])
         
-        # Priority 1: Check for annotations (highest priority)
-        if self.has_annotations(ds, metadata):
-            category = 'with_annotations'
-            reasoning_parts.append("Contains annotations/measurements")
+        # Step 1: Check for exclusion criteria first (highest priority)
+        if (len(image_type) > 10 and image_type[10] == 'I1') or (len(image_type) > 2 and image_type[2] == 'INVALID'):
+            category = 'excluded'
+            reasoning_parts.append(f"Excluded image (ImageType: {image_type})")
+            confidence = 0.95
+        # Step 2: Check for tissue doppler (0019, 0003)
+        elif len(image_type) >= 4 and image_type[3] in ['0019', '0003']:
+            category = 'tissue_doppler'
+            reasoning_parts.append(f"Tissue Doppler (ImageType {image_type[3]})")
+            confidence = 0.95
+        # Step 3: Check for side-by-side B-mode + Color Doppler layout
+        elif self.is_side_by_side_doppler(ds, metadata):
+            category = 'side_by_side_doppler'
+            reasoning_parts.append("Side-by-side B-mode + Color Doppler layout detected")
             confidence = 0.9
-        
-        # Priority 2: Check for M-mode with Doppler
-        elif self.is_mmode(ds, metadata) and self.has_doppler_signals(ds, metadata):
-            category = 'mmode_doppler'
-            reasoning_parts.append("M-mode with Doppler signals")
-            confidence = 0.85
-        
-        # Priority 3: Check for M-mode 2D
-        elif self.is_mmode(ds, metadata):
-            category = 'mmode_2d'
-            reasoning_parts.append("M-mode imaging")
-            confidence = 0.8
-        
-        # Priority 4: Check for side-by-side comparison
-        elif self.is_side_by_side(ds, metadata):
-            category = 'side_by_side'
-            reasoning_parts.append("Side-by-side comparison layout")
-            confidence = 0.75
-        
-        # Priority 5: Check for 2D with Color Doppler
-        elif self.has_color_doppler(ds, metadata):
-            category = '2d_with_doppler'
-            reasoning_parts.append("2D imaging with Color Doppler")
-            confidence = 0.8
-        
-        # Default: 2D without Color Doppler
         else:
-            category = '2d_no_doppler'
-            reasoning_parts.append("Standard 2D echo imaging")
-            confidence = 0.7
+            # Step 4: Classify by frame count and ImageType[3]
+            is_multi = self.is_multi_frame(ds, metadata)
+            vendor_code = image_type[3] if len(image_type) >= 4 else None
+            
+            if is_multi:
+                # Multi-frame classification
+                if vendor_code == '0011':
+                    category = 'multi_frame_with_doppler'
+                    reasoning_parts.append(f"Multi-frame with Color Doppler (ImageType 0011, {metadata.get('number_of_frames', 1)} frames)")
+                    confidence = 0.9
+                elif vendor_code == '0001':
+                    category = 'multi_frame_no_doppler'
+                    reasoning_parts.append(f"Multi-frame without Color Doppler (ImageType 0001, {metadata.get('number_of_frames', 1)} frames)")
+                    confidence = 0.9
+                else:
+                    # Fallback for unrecognized multi-frame codes
+                    category = 'multi_frame_no_doppler'
+                    reasoning_parts.append(f"Multi-frame (ImageType {vendor_code or 'unknown'}, {metadata.get('number_of_frames', 1)} frames)")
+                    confidence = 0.7
+            else:
+                # Single-frame classification by ImageType[3]
+                if vendor_code == '0001':
+                    category = '2d_single_no_doppler'
+                    reasoning_parts.append("2D Single-frame without Color Doppler (ImageType 0001)")
+                    confidence = 0.9
+                elif vendor_code == '0011':
+                    category = '2d_single_with_doppler'
+                    reasoning_parts.append("2D Single-frame with Color Doppler (ImageType 0011)")
+                    confidence = 0.9
+                elif vendor_code in ['0002', '0004', '0005', '0015']:
+                    category = 'cw_doppler'
+                    reasoning_parts.append(f"CW Doppler (ImageType {vendor_code})")
+                    confidence = 0.9
+                elif vendor_code in ['0008', '0009']:
+                    category = 'pw_doppler'
+                    reasoning_parts.append(f"PW Doppler (ImageType {vendor_code})")
+                    confidence = 0.9
+                elif vendor_code == '0020':
+                    category = 'color_m_mode'
+                    reasoning_parts.append("Color M-Mode (ImageType 0020)")
+                    confidence = 0.9
+                else:
+                    # Default for unrecognized single-frame codes
+                    category = '2d_single_no_doppler'
+                    reasoning_parts.append(f"Single-frame (ImageType {vendor_code or 'unknown'}) - defaulted to 2D")
+                    confidence = 0.6
         
         # Add additional reasoning based on metadata
         if metadata.get('modality') == 'US':

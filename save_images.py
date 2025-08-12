@@ -42,9 +42,16 @@ def save_dicom_image(file_path, output_path, title=""):
         if hasattr(ds, 'pixel_array'):
             pixel_array = ds.pixel_array
             
-            # Handle multi-frame images - show first frame
-            if len(pixel_array.shape) > 2:
-                pixel_array = pixel_array[0] if pixel_array.shape[0] > 0 else pixel_array
+            # Handle multi-frame vs single-frame images
+            if getattr(ds, 'NumberOfFrames', 1) > 1:
+                # Multi-frame: take first frame
+                if len(pixel_array.shape) > 2:
+                    pixel_array = pixel_array[0]
+            else:
+                # Single-frame: ensure proper 2D or 3D format
+                if len(pixel_array.shape) == 3 and pixel_array.shape[0] == 1:
+                    # Remove leading dimension if it's 1 (squeeze first axis)
+                    pixel_array = pixel_array[0]
             
             # Create figure
             plt.figure(figsize=(12, 10))
@@ -73,9 +80,13 @@ def save_dicom_image(file_path, output_path, title=""):
         print(f"Error saving image {file_path}: {e}")
         return False
 
-def save_sample_images(max_per_category=3):
+def save_sample_images(max_per_category=3, save_all=False):
     """
     Save sample images from each classification category as PNG files
+    
+    Args:
+        max_per_category: Maximum images to save per category (ignored if save_all=True)
+        save_all: If True, save all DICOM images found (ignores max_per_category)
     """
     
     # Set up paths
@@ -98,29 +109,34 @@ def save_sample_images(max_per_category=3):
         # Initialize classifier
         classifier = EchoCardiographyClassifier(root_dir)
         
-        # Find sample DICOM files
+        # Find DICOM files
         sample_files = []
+        print("Scanning for DICOM files...")
         for root, dirs, files in os.walk(root_dir):
             for file in files:
                 if file.lower().endswith('.dcm'):
                     sample_files.append(os.path.join(root, file))
-                    if len(sample_files) >= 30:  # Get enough samples for good coverage
+                    if not save_all and len(sample_files) >= 50:  # Get enough samples for good coverage
                         break
-            if len(sample_files) >= 30:
+            if not save_all and len(sample_files) >= 50:
                 break
         
         if not sample_files:
             print("No DICOM files found")
             return False
         
-        print(f"Found {len(sample_files)} sample DICOM files")
+        if save_all:
+            print(f"Found {len(sample_files)} DICOM files - SAVING ALL")
+        else:
+            print(f"Found {len(sample_files)} sample DICOM files")
         
         # Classify all sample files
         classifications_by_category = {category: [] for category in classifier.CATEGORIES.keys()}
         
-        print("Classifying sample files...")
+        print("Classifying files...")
         for i, file_path in enumerate(sample_files):
-            print(f"  Processing {i+1}/{len(sample_files)}: {os.path.basename(file_path)}")
+            if i % 100 == 0 or i == len(sample_files) - 1:  # Progress every 100 files
+                print(f"  Processing {i+1}/{len(sample_files)}: {os.path.basename(file_path)}")
             
             classification = classifier.classify_dicom(file_path)
             if classification:
@@ -128,7 +144,10 @@ def save_sample_images(max_per_category=3):
         
         # Save images from each category
         print("\n" + "="*60)
-        print("SAVING SAMPLE IMAGES FROM EACH CATEGORY")
+        if save_all:
+            print("SAVING ALL IMAGES BY CATEGORY")
+        else:
+            print("SAVING SAMPLE IMAGES FROM EACH CATEGORY")
         print("="*60)
         
         total_saved = 0
@@ -146,15 +165,22 @@ def save_sample_images(max_per_category=3):
             category_dir = os.path.join(output_dir, category)
             os.makedirs(category_dir, exist_ok=True)
             
-            # Save up to max_per_category images
-            sample_size = min(len(classifications), max_per_category)
-            samples = classifications[:sample_size]
+            # Determine how many images to save
+            if save_all:
+                samples = classifications
+                sample_size = len(classifications)
+                print(f"  Saving all {sample_size} images...")
+            else:
+                sample_size = min(len(classifications), max_per_category)
+                samples = classifications[:sample_size]
+                print(f"  Saving {sample_size} sample images...")
             
             for i, classification in enumerate(samples):
-                print(f"  Saving image {i+1}/{sample_size}...")
-                print(f"    File: {os.path.basename(classification.file_path)}")
-                print(f"    Confidence: {classification.confidence:.2f}")
-                print(f"    Reasoning: {classification.reasoning}")
+                if not save_all or i % 50 == 0 or i == sample_size - 1:  # Progress feedback
+                    print(f"    Saving {i+1}/{sample_size}: {os.path.basename(classification.file_path)}")
+                if not save_all:  # Only show detailed info for sample mode
+                    print(f"      Confidence: {classification.confidence:.2f}")
+                    print(f"      Reasoning: {classification.reasoning}")
                 
                 # Create output filename
                 base_name = os.path.basename(classification.file_path)
@@ -223,11 +249,13 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description='Save DICOM echocardiography images as PNG files')
     parser.add_argument('--max-per-category', type=int, default=3,
-                       help='Maximum images to save per category (default: 3)')
+                       help='Maximum images to save per category (default: 3, ignored if --all is used)')
+    parser.add_argument('--all', action='store_true',
+                       help='Save ALL DICOM images found (ignores --max-per-category)')
     
     args = parser.parse_args()
     
-    success = save_sample_images(args.max_per_category)
+    success = save_sample_images(args.max_per_category, save_all=args.all)
     
     if success:
         print("\n🎉 All images saved successfully!")
