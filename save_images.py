@@ -26,6 +26,14 @@ except ImportError:
     print("Error: pydicom library not found. Please install with: pip install pydicom")
     sys.exit(1)
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    print("Warning: tqdm not found. Installing...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "tqdm"])
+    from tqdm import tqdm
+
 def save_dicom_image(file_path, output_path, title=""):
     """
     Save a DICOM image as PNG file
@@ -175,9 +183,13 @@ def save_sample_images(max_per_category=3, save_all=False):
                 samples = classifications[:sample_size]
                 print(f"  Saving {sample_size} sample images...")
             
-            for i, classification in enumerate(samples):
-                if not save_all or i % 50 == 0 or i == sample_size - 1:  # Progress feedback
-                    print(f"    Saving {i+1}/{sample_size}: {os.path.basename(classification.file_path)}")
+            # Use tqdm for progress tracking
+            if save_all and sample_size > 10:  # Use progress bar for large datasets
+                samples_iterator = tqdm(samples, desc=f"  {category}", leave=False)
+            else:
+                samples_iterator = samples
+            
+            for i, classification in enumerate(samples_iterator):
                 if not save_all:  # Only show detailed info for sample mode
                     print(f"      Confidence: {classification.confidence:.2f}")
                     print(f"      Reasoning: {classification.reasoning}")
@@ -236,7 +248,6 @@ def save_sample_images(max_per_category=3, save_all=False):
                     if filename.endswith('.png'):
                         print(f"    {filename}")
         
-        return True
         
     except Exception as e:
         print(f"Error during image saving: {e}")

@@ -35,6 +35,22 @@ except ImportError:
     print("Error: pydicom library not found. Please install with: pip install pydicom")
     sys.exit(1)
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    print("Warning: tqdm not found. Installing...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "tqdm"])
+    from tqdm import tqdm
+
+# Import cardiac phase detection functionality
+try:
+    from cardiac_phase_detector import detect_cardiac_phases_for_multiframe, CardiacPhaseDetector
+except ImportError:
+    print("Warning: cardiac_phase_detector.py not found. Cardiac phase detection will be disabled.")
+    detect_cardiac_phases_for_multiframe = None
+    CardiacPhaseDetector = None
+
 
 @dataclass
 class DicomClassification:
@@ -295,6 +311,50 @@ class EchoCardiographyClassifier:
         
         return False
     
+    def detect_cardiac_phases(self, file_path: str, ds: Optional[pydicom.Dataset] = None) -> Optional[Dict]:
+        """
+        Detect cardiac phases (end-systolic and end-diastolic frames) for multi-frame images.
+        
+        Args:
+            file_path: Path to DICOM file
+            ds: Optional pre-loaded pydicom Dataset
+            
+        Returns:
+            Dictionary containing cardiac phase information, or None if detection fails
+        """
+        if detect_cardiac_phases_for_multiframe is None:
+            self.logger.warning("Cardiac phase detection not available (cardiac_phase_detector.py not found)")
+            return None
+        
+        try:
+            # Use pre-loaded dataset if available
+            if ds is not None:
+                # Check if multi-frame
+                num_frames = getattr(ds, 'NumberOfFrames', 1)
+                if num_frames <= 1:
+                    return None
+                
+                # Use CardiacPhaseDetector directly with dataset
+                detector = CardiacPhaseDetector(end_systole_percent=0.35, end_diastole_percent=0.95)
+                
+                # Check for required timing information
+                required_tags = [(0x0018, 0x6060), (0x0018, 0x1063)]  # R Wave Times, Frame Time
+                missing_tags = [tag for tag in required_tags if tag not in ds]
+                
+                if missing_tags:
+                    self.logger.debug(f"Missing cardiac timing tags in {os.path.basename(file_path)}: {missing_tags}")
+                    return None
+                
+                cardiac_phases = detector.process_dicom_dataset(ds)
+                return detector.get_key_frames(cardiac_phases)
+            else:
+                # Use file path
+                return detect_cardiac_phases_for_multiframe(file_path, verbose=False)
+                
+        except Exception as e:
+            self.logger.debug(f"Cardiac phase detection failed for {os.path.basename(file_path)}: {e}")
+            return None
+    
     
     def classify_dicom(self, file_path: str) -> Optional[DicomClassification]:
         """
@@ -311,6 +371,19 @@ class EchoCardiographyClassifier:
             return None
         
         metadata = self.extract_metadata(ds)
+        
+        # Detect cardiac phases for multi-frame images
+        cardiac_phases = None
+        is_multi = self.is_multi_frame(ds, metadata)
+        if is_multi:
+            cardiac_phases = self.detect_cardiac_phases(file_path, ds)
+            if cardiac_phases:
+                metadata['cardiac_phases'] = cardiac_phases
+                metadata['has_cardiac_timing'] = True
+                metadata['end_systolic_frames'] = cardiac_phases.get('end_systolic_frames', [])
+                metadata['end_diastolic_frames'] = cardiac_phases.get('end_diastolic_frames', [])
+            else:
+                metadata['has_cardiac_timing'] = False
         
         # Classification logic: Exclusion → Annotations → Frame count + ImageType[3]
         reasoning_parts = []
@@ -400,26 +473,53 @@ class EchoCardiographyClassifier:
             metadata=metadata
         )
     
-    def process_directory(self, progress_callback=None) -> None:
+    def process_directory(self, progress_callback=None, show_progress=True) -> None:
         """
         Process all DICOM files in the directory tree
         
         Args:
             progress_callback: Optional callback function for progress updates
+            show_progress: Whether to show tqdm progress bar (default: True)
         """
         self.logger.info(f"Starting DICOM classification in directory: {self.root_dir}")
         
-        # Find all DICOM files
+        # Find all DICOM files with progress bar
+        print("🔍 Scanning for DICOM files...")
         dicom_files = []
+        
+        # First pass: count directories for progress estimation
+        total_dirs = sum([len(dirs) for root, dirs, files in os.walk(self.root_dir)])
+        
+        # Second pass: collect files with progress
+        if show_progress and total_dirs > 0:
+            pbar_scan = tqdm(total=total_dirs, desc="Scanning directories", unit="dirs")
+        
         for root, dirs, files in os.walk(self.root_dir):
             for file in files:
                 if file.lower().endswith('.dcm') or not '.' in file:  # DICOM files often have no extension
                     dicom_files.append(os.path.join(root, file))
+            
+            if show_progress and total_dirs > 0:
+                pbar_scan.update(1)
+        
+        if show_progress and total_dirs > 0:
+            pbar_scan.close()
         
         self.logger.info(f"Found {len(dicom_files)} potential DICOM files")
         
-        # Process each file
-        for i, file_path in enumerate(dicom_files):
+        if len(dicom_files) == 0:
+            self.logger.warning("No DICOM files found!")
+            return
+        
+        # Process each file with enhanced progress bar
+        print(f"📊 Processing {len(dicom_files)} DICOM files...")
+        
+        if show_progress:
+            pbar = tqdm(dicom_files, desc="Classifying", unit="files")
+        else:
+            pbar = dicom_files
+        
+        for i, file_path in enumerate(pbar):
             if progress_callback:
                 progress_callback(i, len(dicom_files))
             
@@ -428,13 +528,31 @@ class EchoCardiographyClassifier:
                 self.classifications.append(classification)
                 self.stats[classification.category] += 1
                 
-                if i % 100 == 0:  # Log progress every 100 files
-                    self.logger.info(f"Processed {i}/{len(dicom_files)} files")
+                # Update progress bar with current stats
+                if show_progress and hasattr(pbar, 'set_postfix'):
+                    # Show top 3 categories in progress bar
+                    top_categories = sorted(self.stats.items(), key=lambda x: x[1], reverse=True)[:3]
+                    postfix_dict = {cat[:12]: count for cat, count in top_categories}
+                    pbar.set_postfix(postfix_dict)
+            
+            # Log progress every 1000 files for large datasets
+            if (i + 1) % 1000 == 0:
+                self.logger.info(f"Processed {i+1}/{len(dicom_files)} files")
         
+        if show_progress and hasattr(pbar, 'close'):
+            pbar.close()
+        
+        print("✅ Classification complete!")
         self.logger.info("Classification complete!")
         self.logger.info("Statistics:")
         for category, count in self.stats.items():
             self.logger.info(f"  {self.CATEGORIES[category]}: {count}")
+        
+        # Print summary statistics
+        print(f"\n📈 Classification Summary ({len(self.classifications)} files processed):")
+        for category, count in sorted(self.stats.items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / len(self.classifications) * 100) if self.classifications else 0
+            print(f"  {self.CATEGORIES[category]}: {count} ({percentage:.1f}%)")
     
     def save_results(self) -> None:
         """Save classification results to CSV and JSON files"""
@@ -509,24 +627,15 @@ def main():
     # Initialize classifier
     classifier = EchoCardiographyClassifier(args.input_dir, args.output_dir)
     
-    # Process files with progress indicator
-    def progress_callback(current, total):
-        percent = (current / total) * 100
-        print(f"\rProgress: {current}/{total} ({percent:.1f}%)", end='', flush=True)
-    
     try:
-        classifier.process_directory(progress_callback)
-        print()  # New line after progress
+        # Process with enhanced tqdm progress bars
+        classifier.process_directory(show_progress=True)
         classifier.save_results()
         
-        print("\nClassification Summary:")
-        for category, count in classifier.stats.items():
-            print(f"  {classifier.CATEGORIES[category]}: {count}")
-        
     except KeyboardInterrupt:
-        print("\nClassification interrupted by user")
+        print("\n⚠️  Classification interrupted by user")
     except Exception as e:
-        print(f"Error during classification: {e}")
+        print(f"❌ Error during classification: {e}")
         sys.exit(1)
 
 
