@@ -75,7 +75,7 @@ class EchoCardiographyClassifier:
         'pw_doppler': 'PW Doppler (0008,0009)',
         'color_m_mode': 'Color M-Mode (0020)',
         'tissue_doppler': 'Tissue Doppler (0019,0003)',
-        'side_by_side_doppler': 'Side-by-side B-mode + Color Doppler'
+        'side_by_side_doppler': 'Side-by-side B-mode + Color Doppler OR B-mode + B-mode'
     }
     
     def __init__(self, root_dir: str, output_dir: str = None):
@@ -140,10 +140,44 @@ class EchoCardiographyClassifier:
         metadata['study_description'] = getattr(ds, 'StudyDescription', '')
         metadata['acquisition_type'] = getattr(ds, 'AcquisitionType', '')
         
+        # Extract manufacturer information
+        manufacturer = getattr(ds, 'Manufacturer', '').strip() if hasattr(ds, 'Manufacturer') else ''
+        metadata['manufacturer'] = manufacturer
+        
+        # Extract Philips-specific tags
+        if 'PHILIPS' in manufacturer.upper():
+            # Philips US Imaging DD tags
+            metadata['philips_dd_041'] = getattr(ds, 'get((0x200D, 0x0038), None)', None)  # Color Doppler indicator
+            metadata['philips_dd_066'] = getattr(ds, 'get((0x200D, 0x0051), None)', None)  # Non-color indicator
+            
+            # Try to get the tags directly
+            try:
+                if (0x200D, 0x0038) in ds:
+                    metadata['philips_dd_041'] = str(ds[0x200D, 0x0038].value)
+                else:
+                    metadata['philips_dd_041'] = None
+            except:
+                metadata['philips_dd_041'] = None
+                
+            try:
+                if (0x200D, 0x0051) in ds:
+                    metadata['philips_dd_066'] = str(ds[0x200D, 0x0051].value)
+                else:
+                    metadata['philips_dd_066'] = None
+            except:
+                metadata['philips_dd_066'] = None
+        
         # Image dimensions and properties
         metadata['rows'] = getattr(ds, 'Rows', 0)
         metadata['columns'] = getattr(ds, 'Columns', 0)
-        metadata['number_of_frames'] = getattr(ds, 'NumberOfFrames', 1)
+        # Ensure number_of_frames is always an integer
+        num_frames = getattr(ds, 'NumberOfFrames', 1)
+        if isinstance(num_frames, str):
+            try:
+                num_frames = int(num_frames)
+            except ValueError:
+                num_frames = 1
+        metadata['number_of_frames'] = num_frames
         metadata['samples_per_pixel'] = getattr(ds, 'SamplesPerPixel', 1)
         metadata['photometric_interpretation'] = getattr(ds, 'PhotometricInterpretation', '')
         metadata['color_space'] = getattr(ds, 'ColorSpace', '')
@@ -170,7 +204,14 @@ class EchoCardiographyClassifier:
         Returns:
             True if multi-frame
         """
-        return metadata.get('number_of_frames', 1) > 1
+        num_frames = metadata.get('number_of_frames', 1)
+        # Convert to int if it's a string
+        if isinstance(num_frames, str):
+            try:
+                num_frames = int(num_frames)
+            except ValueError:
+                num_frames = 1
+        return num_frames > 1
     
     def has_annotations(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
         """
@@ -241,16 +282,71 @@ class EchoCardiographyClassifier:
         
         return any(fallback_indicators)
     
-    def is_side_by_side_doppler(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
+    def has_doppler_spectrum_regions(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
         """
-        Check if image contains side-by-side B-mode + Color Doppler regions
+        Check if image contains Doppler spectrum regions (RegionDataType = 4)
+        Enhanced logic: Exactly 2 regions where region 2 has RegionDataType = 4
         
         Args:
             ds: pydicom Dataset
             metadata: Extracted metadata
             
         Returns:
-            True if side-by-side B-mode + Color Doppler layout is detected
+            True if Doppler spectrum regions are detected (2 regions, region 2 = RegionDataType 4)
+        """
+        # Check if SequenceOfUltrasoundRegions exists
+        if not hasattr(ds, 'SequenceOfUltrasoundRegions'):
+            return False
+        
+        regions = ds.SequenceOfUltrasoundRegions
+        
+        # Must have exactly 2 regions for two-region CW Doppler
+        if len(regions) != 2:
+            return False
+        
+        # Check if region 2 (index 1) has RegionDataType = 4 (Doppler spectrum)
+        region2 = regions[1]
+        data_type_2 = getattr(region2, 'RegionDataType', 0)
+        
+        if data_type_2 == 4:  # Doppler spectrum in region 2
+            return True
+        
+        return False
+    
+    def get_primary_region_type(self, ds: pydicom.Dataset, metadata: Dict) -> Optional[int]:
+        """
+        Get the primary region data type for single-region images
+        
+        Args:
+            ds: pydicom Dataset
+            metadata: Extracted metadata
+            
+        Returns:
+            RegionDataType value or None if not available
+        """
+        # Check if SequenceOfUltrasoundRegions exists
+        if not hasattr(ds, 'SequenceOfUltrasoundRegions'):
+            return None
+        
+        regions = ds.SequenceOfUltrasoundRegions
+        
+        # For single-region images, return the first region's data type
+        if len(regions) == 1:
+            region = regions[0]
+            return getattr(region, 'RegionDataType', None)
+        
+        return None
+    
+    def is_side_by_side_doppler(self, ds: pydicom.Dataset, metadata: Dict) -> bool:
+        """
+        Check if image contains side-by-side regions (B-mode + Color Doppler OR B-mode + B-mode)
+        
+        Args:
+            ds: pydicom Dataset
+            metadata: Extracted metadata
+            
+        Returns:
+            True if side-by-side layout is detected (B-mode + Color Doppler OR B-mode + B-mode)
         """
         # Check if SequenceOfUltrasoundRegions exists
         if not hasattr(ds, 'SequenceOfUltrasoundRegions'):
@@ -262,48 +358,84 @@ class EchoCardiographyClassifier:
         if len(regions) != 2:
             return False
         
-        # Count B-mode and Doppler regions
-        b_mode_regions = []
-        doppler_regions = []
+        manufacturer = metadata.get('manufacturer', '').upper()
         
-        for region in regions:
-            data_type = getattr(region, 'RegionDataType', 0)
-            if data_type == 1:  # B-mode (grayscale)
-                b_mode_regions.append(region)
-            elif data_type == 2:  # Color Doppler
-                doppler_regions.append(region)
+        if 'PHILIPS' in manufacturer:
+            # For Philips: Enhanced logic for both B-mode + Color Doppler and B-mode + B-mode
+            region1 = regions[0]
+            region2 = regions[1]
+            
+            data_type_1 = getattr(region1, 'RegionDataType', 0)
+            data_type_2 = getattr(region2, 'RegionDataType', 0)
+            
+            # Exclude combinations with Doppler spectrum (RegionDataType = 4)
+            if data_type_1 == 4 or data_type_2 == 4:
+                return False  # This is 2D + Doppler spectrum combination, not side-by-side
+            
+            # Accept these combinations as side-by-side:
+            # 1. B-mode + B-mode (RegionDataType = 1, 1)
+            # 2. B-mode + Color Doppler (RegionDataType = 1, 2 with DD 066)
+            
+            # Case 1: B-mode + B-mode (both regions are B-mode)
+            if data_type_1 == 1 and data_type_2 == 1:
+                # Both are B-mode regions - check spatial layout only
+                pass  # Continue to spatial analysis below
+            
+            # Case 2: B-mode + Color Doppler (original logic with DD 066 requirement)
+            elif (data_type_1 == 1 and data_type_2 == 2) or (data_type_1 == 2 and data_type_2 == 1):
+                # Must have DD 066 tag for B-mode + Color Doppler
+                dd_066 = metadata.get('philips_dd_066')
+                has_dd_066 = dd_066 is not None and 'Philips US Imaging DD 066' in str(dd_066)
+                
+                if not has_dd_066:
+                    return False  # Missing DD 066, so not side-by-side B-mode + Color Doppler
+            else:
+                # Other combinations not supported
+                return False
+        else:
+            # For GE/TOSHIBA: Use original logic with RegionDataType requirement
+            # Count B-mode and Doppler regions
+            b_mode_regions = []
+            doppler_regions = []
+            
+            for region in regions:
+                data_type = getattr(region, 'RegionDataType', 0)
+                if data_type == 1:  # B-mode (grayscale)
+                    b_mode_regions.append(region)
+                elif data_type == 2:  # Color Doppler
+                    doppler_regions.append(region)
+            
+            # Must have exactly 1 B-mode and 1 Color Doppler region
+            if len(b_mode_regions) != 1 or len(doppler_regions) != 1:
+                return False
+            
+            region1 = b_mode_regions[0]
+            region2 = doppler_regions[0]
         
-        # Must have exactly 1 B-mode and 1 Color Doppler region
-        if len(b_mode_regions) != 1 or len(doppler_regions) != 1:
-            return False
+        # Get coordinates for both regions
+        r1_x1 = getattr(region1, 'RegionLocationMinX0', 0)
+        r1_x2 = getattr(region1, 'RegionLocationMaxX1', 0)
+        r1_y1 = getattr(region1, 'RegionLocationMinY0', 0)
+        r1_y2 = getattr(region1, 'RegionLocationMaxY1', 0)
         
-        b_region = b_mode_regions[0]
-        d_region = doppler_regions[0]
-        
-        # Get coordinates
-        b_x1 = getattr(b_region, 'RegionLocationMinX0', 0)
-        b_x2 = getattr(b_region, 'RegionLocationMaxX1', 0)
-        b_y1 = getattr(b_region, 'RegionLocationMinY0', 0)
-        b_y2 = getattr(b_region, 'RegionLocationMaxY1', 0)
-        
-        d_x1 = getattr(d_region, 'RegionLocationMinX0', 0)
-        d_x2 = getattr(d_region, 'RegionLocationMaxX1', 0)
-        d_y1 = getattr(d_region, 'RegionLocationMinY0', 0)
-        d_y2 = getattr(d_region, 'RegionLocationMaxY1', 0)
+        r2_x1 = getattr(region2, 'RegionLocationMinX0', 0)
+        r2_x2 = getattr(region2, 'RegionLocationMaxX1', 0)
+        r2_y1 = getattr(region2, 'RegionLocationMinY0', 0)
+        r2_y2 = getattr(region2, 'RegionLocationMaxY1', 0)
         
         # Check if horizontally adjacent (side-by-side)
-        horizontal_gap = min(abs(b_x2 - d_x1), abs(d_x2 - b_x1))
+        horizontal_gap = min(abs(r1_x2 - r2_x1), abs(r2_x2 - r1_x1))
         
         # Check for vertical overlap (needed for side-by-side layout)
-        y_overlap = not (b_y2 < d_y1 or d_y2 < b_y1)
+        y_overlap = not (r1_y2 < r2_y1 or r2_y2 < r1_y1)
         
         # Side-by-side criteria: close horizontal gap + vertical overlap
         if horizontal_gap < 100 and y_overlap:
             return True
         
         # Check if vertically adjacent (top-bottom) as alternative layout
-        vertical_gap = min(abs(b_y2 - d_y1), abs(d_y2 - b_y1))
-        x_overlap = not (b_x2 < d_x1 or d_x2 < b_x1)
+        vertical_gap = min(abs(r1_y2 - r2_y1), abs(r2_y2 - r1_y1))
+        x_overlap = not (r1_x2 < r2_x1 or r2_x2 < r1_x1)
         
         # Top-bottom criteria: close vertical gap + horizontal overlap
         if vertical_gap < 100 and x_overlap:
@@ -331,6 +463,12 @@ class EchoCardiographyClassifier:
             if ds is not None:
                 # Check if multi-frame
                 num_frames = getattr(ds, 'NumberOfFrames', 1)
+                # Convert to int if it's a string
+                if isinstance(num_frames, str):
+                    try:
+                        num_frames = int(num_frames)
+                    except ValueError:
+                        num_frames = 1
                 if num_frames <= 1:
                     return None
                 
@@ -372,6 +510,30 @@ class EchoCardiographyClassifier:
         
         metadata = self.extract_metadata(ds)
         
+        # Route to manufacturer-specific classification
+        manufacturer = metadata.get('manufacturer', '').upper()
+        
+        if 'PHILIPS' in manufacturer:
+            return self._classify_philips(ds, metadata, file_path)
+        elif 'GE' in manufacturer or 'TOSHIBA' in manufacturer:
+            return self._classify_ge_toshiba(ds, metadata, file_path)
+        else:
+            # Default to GE/TOSHIBA flow for unknown manufacturers
+            self.logger.warning(f"Unknown manufacturer '{manufacturer}' in {os.path.basename(file_path)}, using GE/TOSHIBA flow")
+            return self._classify_ge_toshiba(ds, metadata, file_path)
+        
+    def _classify_ge_toshiba(self, ds: pydicom.Dataset, metadata: Dict, file_path: str) -> DicomClassification:
+        """
+        Classification logic for GE and TOSHIBA manufacturers (original flow)
+        
+        Args:
+            ds: pydicom Dataset
+            metadata: Extracted metadata
+            file_path: Path to DICOM file
+            
+        Returns:
+            DicomClassification object
+        """
         # Detect cardiac phases for multi-frame images
         cardiac_phases = None
         is_multi = self.is_multi_frame(ds, metadata)
@@ -472,6 +634,169 @@ class EchoCardiographyClassifier:
             reasoning=reasoning,
             metadata=metadata
         )
+    
+    def _classify_philips(self, ds: pydicom.Dataset, metadata: Dict, file_path: str) -> DicomClassification:
+        """
+        Classification logic for Philips manufacturers
+        
+        Args:
+            ds: pydicom Dataset
+            metadata: Extracted metadata
+            file_path: Path to DICOM file
+            
+        Returns:
+            DicomClassification object
+        """
+        # Detect cardiac phases for multi-frame images
+        cardiac_phases = None
+        is_multi = self.is_multi_frame(ds, metadata)
+        if is_multi:
+            cardiac_phases = self.detect_cardiac_phases(file_path, ds)
+            if cardiac_phases:
+                metadata['cardiac_phases'] = cardiac_phases
+                metadata['has_cardiac_timing'] = True
+                metadata['end_systolic_frames'] = cardiac_phases.get('end_systolic_frames', [])
+                metadata['end_diastolic_frames'] = cardiac_phases.get('end_diastolic_frames', [])
+            else:
+                metadata['has_cardiac_timing'] = False
+        
+        # Philips-specific classification logic
+        reasoning_parts = ["Philips manufacturer detected"]
+        confidence = 0.8  # Base confidence
+        image_type = metadata.get('image_type', [])
+        
+        # Step 1: Check for exclusion criteria first (highest priority)
+        if (len(image_type) > 10 and image_type[10] == 'I1') or (len(image_type) > 2 and image_type[2] == 'INVALID'):
+            category = 'excluded'
+            reasoning_parts.append(f"Excluded image (ImageType: {image_type})")
+            confidence = 0.95
+        # Step 2: Check for side-by-side layout first (before DD tag analysis)
+        elif self.is_side_by_side_doppler(ds, metadata):
+            category = 'side_by_side_doppler'
+            reasoning_parts.append("Philips side-by-side layout detected (B-mode + Color Doppler OR B-mode + B-mode)")
+            confidence = 0.9
+        # Step 3: Check for Doppler spectrum regions (exactly 2 regions, region 2 = RegionDataType 4)
+        elif self.has_doppler_spectrum_regions(ds, metadata):
+            category = 'cw_doppler'
+            reasoning_parts.append("Philips two-region CW Doppler detected (2 regions, region 2 RegionDataType = 4)")
+            confidence = 0.95
+        else:
+            # Step 4: Philips-specific classification using frame count and DD tags
+            
+            # Get frame count (Philips stores as string)
+            num_frames = metadata.get('number_of_frames', 1)
+            if isinstance(num_frames, str):
+                try:
+                    num_frames = int(num_frames)
+                except ValueError:
+                    num_frames = 1
+            
+            is_multi_frame = num_frames > 1
+            
+            # Get Philips DD tags
+            dd_041 = metadata.get('philips_dd_041')  # Color Doppler indicator
+            dd_066 = metadata.get('philips_dd_066')  # Non-color indicator
+            
+            # Determine if it's color doppler or non-color
+            has_color_doppler = dd_041 is not None and 'Philips US Imaging DD 041' in str(dd_041)
+            has_non_color = dd_066 is not None and 'Philips US Imaging DD 066' in str(dd_066)
+            
+            if is_multi_frame:
+                # Multi-frame classification
+                if has_color_doppler:
+                    category = 'multi_frame_with_doppler'
+                    reasoning_parts.append(f"Philips multi-frame with Color Doppler (DD 041, {num_frames} frames)")
+                    confidence = 0.95
+                elif has_non_color:
+                    category = 'multi_frame_no_doppler'
+                    reasoning_parts.append(f"Philips multi-frame without Color Doppler (DD 066, {num_frames} frames)")
+                    confidence = 0.95
+                else:
+                    # Fallback for multi-frame without clear DD tags
+                    category = 'multi_frame_no_doppler'
+                    reasoning_parts.append(f"Philips multi-frame (no DD tags, {num_frames} frames)")
+                    confidence = 0.7
+            else:
+                # Single-frame classification with enhanced region type analysis
+                if has_color_doppler:
+                    category = '2d_single_with_doppler'
+                    reasoning_parts.append("Philips 2D Single-frame with Color Doppler (DD 041)")
+                    confidence = 0.95
+                elif has_non_color:
+                    category = '2d_single_no_doppler'
+                    reasoning_parts.append("Philips 2D Single-frame without Color Doppler (DD 066)")
+                    confidence = 0.95
+                elif not has_non_color and dd_066 is None:
+                    # Enhanced logic: Check region type for images without DD 066 tag
+                    primary_region_type = self.get_primary_region_type(ds, metadata)
+                    
+                    if primary_region_type == 1:  # B-mode region
+                        category = '2d_single_no_doppler'
+                        reasoning_parts.append("Philips 2D Single-frame B-mode (no DD 066 tag, RegionDataType = 1)")
+                        confidence = 0.85
+                    elif primary_region_type == 4:  # Doppler spectrum region
+                        category = 'cw_doppler'
+                        reasoning_parts.append("Philips CW Doppler spectrum (no DD 066 tag, RegionDataType = 4)")
+                        confidence = 0.9
+                    else:
+                        # Fallback for unknown region types without DD tags
+                        category = 'cw_doppler'  # Keep original fallback for other spectrum types
+                        reasoning_parts.append(f"Philips Doppler spectrum (no DD 066 tag, RegionDataType = {primary_region_type})")
+                        confidence = 0.8
+                else:
+                    # Final fallback for single-frame without clear DD tags
+                    category = '2d_single_no_doppler'
+                    reasoning_parts.append("Philips single-frame (unclear DD tags)")
+                    confidence = 0.6
+        
+        # Add additional reasoning based on metadata
+        if metadata.get('modality') == 'US':
+            reasoning_parts.append("Ultrasound modality")
+            confidence += 0.1
+        
+        if 'ECHO' in str(metadata.get('study_description', '')).upper():
+            reasoning_parts.append("Echocardiography study")
+            confidence += 0.05
+        
+        reasoning = "; ".join(reasoning_parts)
+        confidence = min(confidence, 1.0)  # Cap at 1.0
+        
+        return DicomClassification(
+            file_path=file_path,
+            category=category,
+            confidence=confidence,
+            reasoning=reasoning,
+            metadata=metadata
+        )
+    
+    def _philips_fallback_classification(self, ds: pydicom.Dataset, metadata: Dict, vendor_code: str) -> str:
+        """
+        Fallback classification for Philips files when vendor codes are not recognized
+        
+        Args:
+            ds: pydicom Dataset
+            metadata: Extracted metadata
+            vendor_code: ImageType[3] vendor code
+            
+        Returns:
+            Category string
+        """
+        # Try alternative Philips-specific detection methods
+        
+        # Check for Philips-specific tags that might indicate image type
+        # These are placeholder checks - would need actual Philips DICOM samples to determine real tags
+        
+        # Check for color doppler using Philips-specific methods
+        if self.has_color_doppler(ds, metadata):
+            if self.is_multi_frame(ds, metadata):
+                return 'multi_frame_with_doppler'
+            else:
+                return '2d_single_with_doppler'
+        else:
+            if self.is_multi_frame(ds, metadata):
+                return 'multi_frame_no_doppler'
+            else:
+                return '2d_single_no_doppler'
     
     def process_directory(self, progress_callback=None, show_progress=True) -> None:
         """

@@ -15,11 +15,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from dicom_echo_classifier import EchoCardiographyClassifier
 
-def run_sample_classification():
+def run_sample_classification(root_dir=None):
     """Run classification on a sample of DICOM files"""
     
     # Set up paths
-    root_dir = "/research/projects/Chao/Echo-preprocessing/2023Examples"
+    if root_dir is None:
+        root_dir = "/research/projects/Chao/Echo-preprocessing/2023Examples"
     output_dir = "/research/projects/Chao/Echo-preprocessing/DICOM_classification/sample_results"
     
     print("Running Sample DICOM Echocardiography Classification")
@@ -112,10 +113,11 @@ def run_sample_classification():
         traceback.print_exc()
         return False
 
-def run_full_classification():
+def run_full_classification(root_dir=None):
     """Run the full classification on all DICOM files"""
     
-    root_dir = "/research/projects/Chao/Echo-preprocessing/2023Examples"
+    if root_dir is None:
+        root_dir = "/research/projects/Chao/Echo-preprocessing/2023Examples"
     output_dir = "/research/projects/Chao/Echo-preprocessing/DICOM_classification/full_results"
     
     print("Running Full DICOM Classification...")
@@ -163,14 +165,17 @@ if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser(description='Run DICOM classification')
+    parser.add_argument('directory', nargs='?', 
+                       default='/research/projects/Chao/Echo-preprocessing/2023Examples',
+                       help='Directory containing DICOM files (default: /research/projects/Chao/Echo-preprocessing/2023Examples)')
     parser.add_argument('--full', action='store_true', 
                        help='Run full classification instead of sample')
     
     args = parser.parse_args()
     
     if args.full:
-        success = run_full_classification()
+        success = run_full_classification(args.directory)
     else:
-        success = run_sample_classification()
+        success = run_sample_classification(args.directory)
     
     sys.exit(0 if success else 1)

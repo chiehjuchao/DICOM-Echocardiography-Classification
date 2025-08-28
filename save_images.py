@@ -88,17 +88,18 @@ def save_dicom_image(file_path, output_path, title=""):
         print(f"Error saving image {file_path}: {e}")
         return False
 
-def save_sample_images(max_per_category=3, save_all=False):
+def save_sample_images(max_per_category=3, save_all=False, input_path=None):
     """
     Save sample images from each classification category as PNG files
     
     Args:
         max_per_category: Maximum images to save per category (ignored if save_all=True)
         save_all: If True, save all DICOM images found (ignores max_per_category)
+        input_path: Custom input directory path (default: 2023Examples)
     """
     
     # Set up paths
-    root_dir = "/research/projects/Chao/Echo-preprocessing/2023Examples"
+    root_dir = input_path or "/research/projects/Chao/Echo-preprocessing/2023Examples"
     output_dir = "/research/projects/Chao/Echo-preprocessing/DICOM_classification/saved_images"
     
     print("DICOM Echocardiography Image Saver")
@@ -140,8 +141,10 @@ def save_sample_images(max_per_category=3, save_all=False):
         
         # Classify all sample files
         classifications_by_category = {category: [] for category in classifier.CATEGORIES.keys()}
+        classifications_by_category['other'] = []  # Add 'other' category for unclassified files
         
         print("Classifying files...")
+        unclassified_count = 0
         for i, file_path in enumerate(sample_files):
             if i % 100 == 0 or i == len(sample_files) - 1:  # Progress every 100 files
                 print(f"  Processing {i+1}/{len(sample_files)}: {os.path.basename(file_path)}")
@@ -149,6 +152,21 @@ def save_sample_images(max_per_category=3, save_all=False):
             classification = classifier.classify_dicom(file_path)
             if classification:
                 classifications_by_category[classification.category].append(classification)
+            else:
+                # Create a dummy classification for unclassified files
+                from dicom_echo_classifier import DicomClassification
+                unclassified = DicomClassification(
+                    file_path=file_path,
+                    category='other',
+                    confidence=0.0,
+                    reasoning='Failed to classify - could not read DICOM file or classification error',
+                    metadata={}
+                )
+                classifications_by_category['other'].append(unclassified)
+                unclassified_count += 1
+        
+        if unclassified_count > 0:
+            print(f"\nFound {unclassified_count} unclassified files - added to 'other' category")
         
         # Save images from each category
         print("\n" + "="*60)
@@ -164,8 +182,12 @@ def save_sample_images(max_per_category=3, save_all=False):
         for category, classifications in classifications_by_category.items():
             if not classifications:
                 continue
-                
-            category_name = classifier.CATEGORIES[category]
+            
+            # Handle 'other' category name
+            if category == 'other':
+                category_name = 'Other/Unclassified Files'
+            else:
+                category_name = classifier.CATEGORIES[category]
             print(f"\n{category_name.upper()} ({len(classifications)} files found)")
             print("-" * len(category_name))
             
@@ -259,6 +281,8 @@ if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser(description='Save DICOM echocardiography images as PNG files')
+    parser.add_argument('input_path', nargs='?', default=None,
+                       help='Input directory containing DICOM files (default: 2023Examples)')
     parser.add_argument('--max-per-category', type=int, default=3,
                        help='Maximum images to save per category (default: 3, ignored if --all is used)')
     parser.add_argument('--all', action='store_true',
@@ -266,7 +290,7 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    success = save_sample_images(args.max_per_category, save_all=args.all)
+    success = save_sample_images(args.max_per_category, save_all=args.all, input_path=args.input_path)
     
     if success:
         print("\n🎉 All images saved successfully!")

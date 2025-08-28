@@ -28,10 +28,12 @@ This project provides intelligent classification of echocardiography DICOM image
 
 ### 🎯 **Core Classification**
 - ✅ **Read-only processing** - Original DICOM files are never modified
+- ✅ **Manufacturer-specific detection flows** - Separate optimized logic for GE/Toshiba vs Philips (MAJOR v2.4 ENHANCEMENT)
 - ✅ **Intelligent classification** using vendor-specific DICOM header patterns
 - ✅ **Advanced spatial analysis** with side-by-side detection (v2.4)
+- ✅ **Enhanced region-based detection** - RegionDataType analysis for precise classification
 - ✅ **Tissue Doppler classification** using ImageType[3] vendor codes
-- ✅ **Side-by-side layout detection** using SequenceOfUltrasoundRegions analysis
+- ✅ **Expanded side-by-side detection** - B-mode + Color Doppler OR B-mode + B-mode layouts
 - ✅ **Enhanced progress tracking** with tqdm progress bars for large datasets
 - ✅ **Confidence scoring** with detailed reasoning for each classification
 
@@ -64,14 +66,20 @@ source dicom_env/bin/activate
 
 ### 2. Classification & Analysis
 ```bash
-# Run sample classification (non-interactive)
+# Run sample classification on default directory (non-interactive)
 python run_classification.py
+
+# Run sample classification on custom directory
+python run_classification.py /path/to/your/dicom/files
 
 # Test side-by-side detection on specific files
 python test_side_by_side.py
 
-# Process all DICOM files in your dataset (full classification)
+# Process all DICOM files in default dataset (full classification)
 python run_classification.py --full
+
+# Process all DICOM files in custom directory (full classification)
+python run_classification.py /path/to/your/dicom/files --full
 
 # Or use the main classifier directly
 python dicom_echo_classifier.py /path/to/dicom/files
@@ -145,7 +153,9 @@ DICOM_classification/
 
 ### Step 3: Side-by-side Layout Detection (3RD PRIORITY)
 - **SequenceOfUltrasoundRegions analysis**:
-  - Exactly 2 regions: 1 B-mode (RegionDataType=1) + 1 Color Doppler (RegionDataType=2)
+  - **Enhanced support**: B-mode + Color Doppler (RegionDataType=1,2) OR B-mode + B-mode (RegionDataType=1,1)
+  - **Philips**: Uses DD tag requirements for Color Doppler, spatial analysis only for B-mode + B-mode
+  - **GE/Toshiba**: Uses original RegionDataType requirements
   - Adjacent layout with gap < 100px and overlap detection
   - Separates comparative displays from standard cine loops
 
@@ -153,16 +163,17 @@ DICOM_classification/
 - **NumberOfFrames** (0028,0008) - Determines multi-frame vs single-frame
 
 ### Step 5: ImageType[3] Classification (5TH PRIORITY)
-- **Vendor-specific codes**:
-  - `0001`, `0011`: Frame-based classification with Color Doppler detection
-  - `0002,0004,0005,0015`: CW Doppler (0003 moved to Tissue Doppler)
-  - `0008,0009`: PW Doppler
-  - `0020`: Color M-Mode
+- **GE/Toshiba**: Uses ImageType[3] vendor codes (0001,0011,0002,0004,0005,0008,0009,0015,0020)
+- **Philips**: Uses DD tag analysis (DD 041 for Color Doppler, DD 066 for non-color) with RegionDataType fallback
+  - **Enhanced single-frame logic**: RegionDataType=1 → 2D categories, RegionDataType=4 → CW Doppler
+  - **Two-region CW Doppler detection**: Exactly 2 regions with region 2 = RegionDataType 4
 
 ### Key Algorithm Features (v2.4):
-- ✅ **Side-by-side detection** using spatial region analysis
+- ✅ **Manufacturer-specific optimization** - Separate classification flows for different vendors
+- ✅ **Enhanced region-based detection** - RegionDataType analysis prevents misclassification
+- ✅ **Side-by-side detection** using spatial region analysis with manufacturer-specific logic
 - ✅ **Tissue Doppler classification** (renamed from annotations)
-- ✅ **Enhanced clinical accuracy** by separating display types
+- ✅ **Enhanced clinical accuracy** by separating display types and vendor patterns
 - ✅ **10-category system** with proper priority hierarchy
 
 ## Output Files
@@ -188,6 +199,26 @@ DICOM_classification/
 - tqdm >= 4.64.0 (for progress bars)
 
 ## Usage Examples
+
+### 💻 **Command Line Usage**
+```bash
+# Show help
+python run_classification.py -h
+
+# Run sample classification (50 files) on default directory
+python run_classification.py
+
+# Run sample classification on custom directory
+python run_classification.py /path/to/your/dicom/files
+
+# Run full classification on all files in default directory
+python run_classification.py --full
+
+# Run full classification on all files in custom directory  
+python run_classification.py /path/to/your/dicom/files --full
+```
+
+**Default directory:** `/research/projects/Chao/Echo-preprocessing/2023Examples`
 
 ### 🎯 **Basic Classification**
 ```python
@@ -294,7 +325,10 @@ For questions or issues, please create an issue in this repository.
 ## Version 2.4.0 Major Release Highlights
 
 ### 🎯 **Advanced Classification System**
-- **Side-by-side Detection**: Advanced spatial analysis using SequenceOfUltrasoundRegions
+- **Manufacturer-Specific Detection Flows**: Separate optimized logic for GE/Toshiba vs Philips (MAJOR ENHANCEMENT)
+- **Enhanced Side-by-side Detection**: B-mode + Color Doppler OR B-mode + B-mode layouts
+- **Philips RegionDataType Analysis**: Prevents misclassification using region type detection
+- **Two-Region CW Doppler Detection**: Exactly 2 regions with region 2 = RegionDataType 4
 - **Tissue Doppler Classification**: ImageType[3] codes 0019 and 0003 high-priority detection
 - **10-category System**: Expanded from 9 to 10 classification categories
 - **5-step Priority Hierarchy**: Improved accuracy with intelligent decision flow
