@@ -26,6 +26,9 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
+import multiprocessing
 
 try:
     import pydicom
@@ -62,6 +65,30 @@ class DicomClassification:
     metadata: Dict
 
 
+def _classify_dicom_wrapper(file_path: str, root_dir: str) -> Optional[DicomClassification]:
+    """
+    Wrapper function for parallel processing of DICOM classification.
+    This needs to be at module level for ProcessPoolExecutor to pickle it.
+
+    Args:
+        file_path: Path to DICOM file
+        root_dir: Root directory (needed for classifier initialization)
+
+    Returns:
+        DicomClassification object or None
+    """
+    # Create a temporary classifier instance for this worker
+    # Note: We don't need full initialization, just classification capability
+    try:
+        classifier = EchoCardiographyClassifier.__new__(EchoCardiographyClassifier)
+        classifier.root_dir = Path(root_dir)
+        classifier.logger = logging.getLogger(__name__)
+        return classifier.classify_dicom(file_path)
+    except Exception as e:
+        logging.warning(f"Error classifying {file_path}: {e}")
+        return None
+
+
 class EchoCardiographyClassifier:
     """DICOM Echocardiography Image Classifier"""
     
@@ -78,18 +105,19 @@ class EchoCardiographyClassifier:
         'side_by_side_doppler': 'Side-by-side B-mode + Color Doppler OR B-mode + B-mode'
     }
     
-    def __init__(self, root_dir: str, output_dir: str = None):
+    def __init__(self, root_dir: str, output_dir: str = None, n_jobs: int = -1):
         """
         Initialize the classifier
-        
+
         Args:
             root_dir: Root directory containing DICOM files
             output_dir: Directory to save classification results
+            n_jobs: Number of parallel jobs to run (-1 uses all CPU cores, 1 disables parallelization)
         """
         self.root_dir = Path(root_dir)
         self.output_dir = Path(output_dir) if output_dir else self.root_dir / "classification_results"
         self.output_dir.mkdir(exist_ok=True)
-        
+
         # Setup logging
         logging.basicConfig(
             level=logging.INFO,
@@ -100,9 +128,19 @@ class EchoCardiographyClassifier:
             ]
         )
         self.logger = logging.getLogger(__name__)
-        
+
         self.classifications = []
         self.stats = defaultdict(int)
+
+        # Configure parallelization
+        if n_jobs == -1:
+            self.n_jobs = multiprocessing.cpu_count()
+        elif n_jobs < 1:
+            self.n_jobs = 1
+        else:
+            self.n_jobs = n_jobs
+
+        self.logger.info(f"Initialized classifier with {self.n_jobs} parallel workers")
     
     def read_dicom_headers(self, file_path: str) -> Optional[pydicom.Dataset]:
         """
@@ -800,84 +838,155 @@ class EchoCardiographyClassifier:
     
     def process_directory(self, progress_callback=None, show_progress=True) -> None:
         """
-        Process all DICOM files in the directory tree
-        
+        Process all DICOM files in the directory tree with optional parallelization
+
         Args:
             progress_callback: Optional callback function for progress updates
             show_progress: Whether to show tqdm progress bar (default: True)
         """
         self.logger.info(f"Starting DICOM classification in directory: {self.root_dir}")
-        
+
         # Find all DICOM files with progress bar
         print("🔍 Scanning for DICOM files...")
         dicom_files = []
-        
+
         # First pass: count directories for progress estimation
         total_dirs = sum([len(dirs) for root, dirs, files in os.walk(self.root_dir)])
-        
+
         # Second pass: collect files with progress
         if show_progress and total_dirs > 0:
             pbar_scan = tqdm(total=total_dirs, desc="Scanning directories", unit="dirs")
-        
+
         for root, dirs, files in os.walk(self.root_dir):
             for file in files:
                 if file.lower().endswith('.dcm') or not '.' in file:  # DICOM files often have no extension
                     dicom_files.append(os.path.join(root, file))
-            
+
             if show_progress and total_dirs > 0:
                 pbar_scan.update(1)
-        
+
         if show_progress and total_dirs > 0:
             pbar_scan.close()
-        
+
         self.logger.info(f"Found {len(dicom_files)} potential DICOM files")
-        
+
         if len(dicom_files) == 0:
             self.logger.warning("No DICOM files found!")
             return
-        
-        # Process each file with enhanced progress bar
-        print(f"📊 Processing {len(dicom_files)} DICOM files...")
-        
+
+        # Process files (parallel or sequential)
+        print(f"📊 Processing {len(dicom_files)} DICOM files with {self.n_jobs} workers...")
+
+        if self.n_jobs == 1:
+            # Sequential processing
+            self._process_sequential(dicom_files, progress_callback, show_progress)
+        else:
+            # Parallel processing
+            self._process_parallel(dicom_files, progress_callback, show_progress)
+
+        print("✅ Classification complete!")
+        self.logger.info("Classification complete!")
+        self.logger.info("Statistics:")
+        for category, count in self.stats.items():
+            self.logger.info(f"  {self.CATEGORIES[category]}: {count}")
+
+        # Print summary statistics
+        print(f"\n📈 Classification Summary ({len(self.classifications)} files processed):")
+        for category, count in sorted(self.stats.items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / len(self.classifications) * 100) if self.classifications else 0
+            print(f"  {self.CATEGORIES[category]}: {count} ({percentage:.1f}%)")
+
+    def _process_sequential(self, dicom_files: List[str], progress_callback=None, show_progress=True) -> None:
+        """
+        Process DICOM files sequentially (original implementation)
+
+        Args:
+            dicom_files: List of DICOM file paths
+            progress_callback: Optional callback function for progress updates
+            show_progress: Whether to show tqdm progress bar
+        """
         if show_progress:
             pbar = tqdm(dicom_files, desc="Classifying", unit="files")
         else:
             pbar = dicom_files
-        
+
         for i, file_path in enumerate(pbar):
             if progress_callback:
                 progress_callback(i, len(dicom_files))
-            
+
             classification = self.classify_dicom(file_path)
             if classification:
                 self.classifications.append(classification)
                 self.stats[classification.category] += 1
-                
+
                 # Update progress bar with current stats
                 if show_progress and hasattr(pbar, 'set_postfix'):
                     # Show top 3 categories in progress bar
                     top_categories = sorted(self.stats.items(), key=lambda x: x[1], reverse=True)[:3]
                     postfix_dict = {cat[:12]: count for cat, count in top_categories}
                     pbar.set_postfix(postfix_dict)
-            
+
             # Log progress every 1000 files for large datasets
             if (i + 1) % 1000 == 0:
                 self.logger.info(f"Processed {i+1}/{len(dicom_files)} files")
-        
+
         if show_progress and hasattr(pbar, 'close'):
             pbar.close()
-        
-        print("✅ Classification complete!")
-        self.logger.info("Classification complete!")
-        self.logger.info("Statistics:")
-        for category, count in self.stats.items():
-            self.logger.info(f"  {self.CATEGORIES[category]}: {count}")
-        
-        # Print summary statistics
-        print(f"\n📈 Classification Summary ({len(self.classifications)} files processed):")
-        for category, count in sorted(self.stats.items(), key=lambda x: x[1], reverse=True):
-            percentage = (count / len(self.classifications) * 100) if self.classifications else 0
-            print(f"  {self.CATEGORIES[category]}: {count} ({percentage:.1f}%)")
+
+    def _process_parallel(self, dicom_files: List[str], progress_callback=None, show_progress=True) -> None:
+        """
+        Process DICOM files in parallel using ProcessPoolExecutor
+
+        Args:
+            dicom_files: List of DICOM file paths
+            progress_callback: Optional callback function for progress updates
+            show_progress: Whether to show tqdm progress bar
+        """
+        # Use ProcessPoolExecutor for parallel processing
+        with ProcessPoolExecutor(max_workers=self.n_jobs) as executor:
+            # Submit all tasks
+            future_to_file = {
+                executor.submit(_classify_dicom_wrapper, file_path, str(self.root_dir)): file_path
+                for file_path in dicom_files
+            }
+
+            # Process completed tasks with progress bar
+            if show_progress:
+                pbar = tqdm(total=len(dicom_files), desc="Classifying", unit="files")
+
+            completed_count = 0
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+
+                if progress_callback:
+                    progress_callback(completed_count, len(dicom_files))
+
+                try:
+                    classification = future.result()
+                    if classification:
+                        self.classifications.append(classification)
+                        self.stats[classification.category] += 1
+
+                        # Update progress bar with current stats
+                        if show_progress and hasattr(pbar, 'set_postfix'):
+                            # Show top 3 categories in progress bar
+                            top_categories = sorted(self.stats.items(), key=lambda x: x[1], reverse=True)[:3]
+                            postfix_dict = {cat[:12]: count for cat, count in top_categories}
+                            pbar.set_postfix(postfix_dict)
+
+                except Exception as e:
+                    self.logger.warning(f"Error processing {file_path}: {e}")
+
+                completed_count += 1
+                if show_progress:
+                    pbar.update(1)
+
+                # Log progress every 1000 files for large datasets
+                if completed_count % 1000 == 0:
+                    self.logger.info(f"Processed {completed_count}/{len(dicom_files)} files")
+
+            if show_progress:
+                pbar.close()
     
     def save_results(self) -> None:
         """Save classification results to CSV and JSON files"""
@@ -938,25 +1047,27 @@ class EchoCardiographyClassifier:
 def main():
     """Main function to run the classifier"""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Classify DICOM echocardiography images')
     parser.add_argument('input_dir', help='Input directory containing DICOM files')
     parser.add_argument('--output-dir', help='Output directory for results')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose logging')
-    
+    parser.add_argument('--n-jobs', '-j', type=int, default=-1,
+                        help='Number of parallel jobs (-1 uses all CPU cores, 1 disables parallelization)')
+
     args = parser.parse_args()
-    
+
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-    
-    # Initialize classifier
-    classifier = EchoCardiographyClassifier(args.input_dir, args.output_dir)
-    
+
+    # Initialize classifier with parallelization support
+    classifier = EchoCardiographyClassifier(args.input_dir, args.output_dir, n_jobs=args.n_jobs)
+
     try:
         # Process with enhanced tqdm progress bars
         classifier.process_directory(show_progress=True)
         classifier.save_results()
-        
+
     except KeyboardInterrupt:
         print("\n⚠️  Classification interrupted by user")
     except Exception as e:

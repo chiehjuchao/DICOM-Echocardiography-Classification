@@ -15,26 +15,27 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from dicom_echo_classifier import EchoCardiographyClassifier
 
-def run_sample_classification(root_dir=None):
+def run_sample_classification(root_dir=None, n_jobs=-1):
     """Run classification on a sample of DICOM files"""
-    
+
     # Set up paths
     if root_dir is None:
         root_dir = "/research/projects/Chao/Echo-preprocessing/2023Examples"
     output_dir = "/research/projects/Chao/Echo-preprocessing/DICOM_classification/sample_results"
-    
+
     print("Running Sample DICOM Echocardiography Classification")
     print(f"Root directory: {root_dir}")
     print(f"Output directory: {output_dir}")
-    
+    print(f"Parallel workers: {n_jobs if n_jobs != -1 else 'All CPU cores'}")
+
     # Check if root directory exists
     if not os.path.exists(root_dir):
         print(f"Error: Root directory {root_dir} does not exist")
         return False
-    
+
     try:
-        # Initialize classifier
-        classifier = EchoCardiographyClassifier(root_dir, output_dir)
+        # Initialize classifier with parallelization
+        classifier = EchoCardiographyClassifier(root_dir, output_dir, n_jobs=n_jobs)
         
         # Find sample DICOM files
         sample_files = []
@@ -113,20 +114,21 @@ def run_sample_classification(root_dir=None):
         traceback.print_exc()
         return False
 
-def run_full_classification(root_dir=None):
+def run_full_classification(root_dir=None, n_jobs=-1):
     """Run the full classification on all DICOM files"""
-    
+
     if root_dir is None:
         root_dir = "/research/projects/Chao/Echo-preprocessing/2023Examples"
     output_dir = "/research/projects/Chao/Echo-preprocessing/DICOM_classification/full_results"
-    
+
     print("Running Full DICOM Classification...")
     print(f"Root directory: {root_dir}")
     print(f"Output directory: {output_dir}")
-    
+    print(f"Parallel workers: {n_jobs if n_jobs != -1 else 'All CPU cores'}")
+
     try:
-        # Initialize classifier
-        classifier = EchoCardiographyClassifier(root_dir, output_dir)
+        # Initialize classifier with parallelization
+        classifier = EchoCardiographyClassifier(root_dir, output_dir, n_jobs=n_jobs)
         
         # Process all files
         def progress_callback(current, total):
@@ -163,19 +165,21 @@ def run_full_classification(root_dir=None):
 
 if __name__ == '__main__':
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Run DICOM classification')
-    parser.add_argument('directory', nargs='?', 
+    parser.add_argument('directory', nargs='?',
                        default='/research/projects/Chao/Echo-preprocessing/2023Examples',
                        help='Directory containing DICOM files (default: /research/projects/Chao/Echo-preprocessing/2023Examples)')
-    parser.add_argument('--full', action='store_true', 
+    parser.add_argument('--full', action='store_true',
                        help='Run full classification instead of sample')
-    
+    parser.add_argument('--n-jobs', '-j', type=int, default=-1,
+                       help='Number of parallel jobs (-1 uses all CPU cores, 1 disables parallelization)')
+
     args = parser.parse_args()
-    
+
     if args.full:
-        success = run_full_classification(args.directory)
+        success = run_full_classification(args.directory, n_jobs=args.n_jobs)
     else:
-        success = run_sample_classification(args.directory)
-    
+        success = run_sample_classification(args.directory, n_jobs=args.n_jobs)
+
     sys.exit(0 if success else 1)
